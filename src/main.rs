@@ -10,14 +10,18 @@ use anyhow::{Context, Result, anyhow, bail};
 use docker_stats::docker_events::{
     ContainerIdentity, ContainerStats, DockerEventFilter, DockerEventMonitor,
 };
+use futures_util::{StreamExt, stream};
 
 type Containers = Arc<RwLock<HashMap<String, ContainerIdentity>>>;
 type ContainerStatsById = Arc<RwLock<HashMap<String, ContainerStats>>>;
+
+const DEFAULT_STATS_CONCURRENCY: usize = 32;
 
 #[derive(Clone, Debug)]
 struct Config {
     output_interval: Duration,
     watch_interval: Duration,
+    stats_concurrency: usize,
 }
 
 impl Default for Config {
@@ -25,6 +29,7 @@ impl Default for Config {
         Self {
             output_interval: Duration::from_secs(10),
             watch_interval: Duration::from_secs(5),
+            stats_concurrency: DEFAULT_STATS_CONCURRENCY,
         }
     }
 }
@@ -105,12 +110,19 @@ async fn main() -> Result<()> {
     let cpu_containers = Arc::clone(&containers);
     let stats_container_stats = Arc::clone(&container_stats);
     let watch_interval = config.watch_interval;
+    let stats_concurrency = config.stats_concurrency;
     let cpu = tokio::spawn(async move {
         let mut interval = tokio::time::interval(watch_interval);
 
         loop {
             interval.tick().await;
-            update_container_stats(&cpu_monitor, &cpu_containers, &stats_container_stats).await?;
+            update_container_stats(
+                &cpu_monitor,
+                &cpu_containers,
+                &stats_container_stats,
+                stats_concurrency,
+            )
+            .await?;
         }
 
         #[allow(unreachable_code)]
@@ -173,6 +185,15 @@ fn parse_config() -> Result<Config> {
                         .context("failed to parse watch-seconds")?,
                 )?;
             }
+            Long("stats-concurrency") => {
+                config.stats_concurrency = positive_usize_arg(
+                    "stats-concurrency",
+                    parser
+                        .value()?
+                        .parse()
+                        .context("failed to parse stats-concurrency")?,
+                )?;
+            }
             Long("help") => {
                 print_usage();
                 std::process::exit(0);
@@ -192,14 +213,26 @@ fn seconds_arg(name: &'static str, seconds: u64) -> Result<Duration> {
     }
 }
 
+fn positive_usize_arg(name: &'static str, value: usize) -> Result<usize> {
+    if value == 0 {
+        bail!("{name} must be greater than zero")
+    } else {
+        Ok(value)
+    }
+}
+
 fn print_usage() {
     println!(
-        "Usage: docker-stats [OPTIONS]\n\
-\n\
-Options:\n\
-  -o, --output-seconds SECONDS  How often to print the current stats [default: 10]\n\
-  -w, --watch-seconds SECONDS   How often to poll Docker stats [default: 5]\n\
-      --help                    Show this help"
+        concat!(
+            "Usage: docker-stats [OPTIONS]\n",
+            "\n",
+            "Options:\n",
+            "  -o, --output-seconds SECONDS   How often to print the current stats [default: 10]\n",
+            "  -w, --watch-seconds SECONDS    How often to poll Docker stats [default: 5]\n",
+            "      --stats-concurrency COUNT  How many Docker stats requests to run at once [default: {}]\n",
+            "      --help                     Show this help"
+        ),
+        DEFAULT_STATS_CONCURRENCY
     );
 }
 
@@ -289,6 +322,7 @@ async fn update_container_stats(
     monitor: &DockerEventMonitor,
     containers: &Containers,
     container_stats: &ContainerStatsById,
+    stats_concurrency: usize,
 ) -> Result<()> {
     let mut containers = containers
         .read()
@@ -299,19 +333,26 @@ async fn update_container_stats(
 
     containers.sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
 
-    for container in containers {
-        match monitor.container_stats(&container.id).await {
+    let results = stream::iter(containers)
+        .map(|container| async move {
+            let stats = monitor.container_stats(&container.id).await;
+            (container, stats)
+        })
+        .buffer_unordered(stats_concurrency)
+        .collect::<Vec<_>>()
+        .await;
+
+    let mut container_stats = container_stats
+        .write()
+        .map_err(|_| anyhow!("container stats lock is poisoned"))?;
+
+    for (container, stats) in results {
+        match stats {
             Ok(Some(stats)) => {
-                container_stats
-                    .write()
-                    .map_err(|_| anyhow!("container stats lock is poisoned"))?
-                    .insert(container.id.clone(), stats);
+                container_stats.insert(container.id.clone(), stats);
             }
             Ok(None) => {
-                container_stats
-                    .write()
-                    .map_err(|_| anyhow!("container stats lock is poisoned"))?
-                    .remove(&container.id);
+                container_stats.remove(&container.id);
             }
             Err(error) => {
                 eprintln!(
