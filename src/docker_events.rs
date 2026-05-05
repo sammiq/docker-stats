@@ -3,9 +3,13 @@ use std::{collections::HashMap, future::Future};
 use bollard::{
     Docker,
     errors::Error,
-    models::{ContainerCpuStats, ContainerStatsResponse, ContainerSummary, EventMessage},
+    models::{
+        ContainerCpuStats, ContainerInspectResponse, ContainerStatsResponse, ContainerSummary,
+        EventMessage,
+    },
     query_parameters::{
-        EventsOptions, EventsOptionsBuilder, ListContainersOptionsBuilder, StatsOptionsBuilder,
+        EventsOptions, EventsOptionsBuilder, InspectContainerOptionsBuilder,
+        ListContainersOptionsBuilder, StatsOptionsBuilder,
     },
 };
 use futures_util::StreamExt;
@@ -22,6 +26,12 @@ pub struct DockerEventFilter {
 pub struct ContainerIdentity {
     pub id: String,
     pub name: String,
+    pub created_at: Option<String>,
+    pub started_at: Option<String>,
+    pub image: Option<String>,
+    pub image_id: Option<String>,
+    pub working_dir: Option<String>,
+    pub labels: HashMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -41,14 +51,25 @@ impl ContainerIdentity {
     pub fn from_event(event: &EventMessage) -> Option<Self> {
         let actor = event.actor.as_ref()?;
         let id = actor.id.clone()?;
-        let name = actor
-            .attributes
-            .as_ref()
+        let attributes = actor.attributes.as_ref();
+        let name = attributes
             .and_then(|attributes| attributes.get("name"))
             .cloned()
             .unwrap_or_else(|| id.clone());
+        let image = attributes
+            .and_then(|attributes| attributes.get("image"))
+            .cloned();
 
-        Some(Self { id, name })
+        Some(Self {
+            id,
+            name,
+            created_at: None,
+            started_at: None,
+            image,
+            image_id: None,
+            working_dir: None,
+            labels: HashMap::new(),
+        })
     }
 
     fn from_summary(summary: ContainerSummary) -> Option<Self> {
@@ -59,7 +80,40 @@ impl ContainerIdentity {
             .map(|name| name.trim_start_matches('/').to_string())
             .unwrap_or_else(|| id.clone());
 
-        Some(Self { id, name })
+        Some(Self {
+            id,
+            name,
+            created_at: summary.created.map(|created| created.to_string()),
+            started_at: None,
+            image: summary.image,
+            image_id: summary.image_id,
+            working_dir: None,
+            labels: summary.labels.unwrap_or_default(),
+        })
+    }
+
+    fn apply_inspect(mut self, inspect: ContainerInspectResponse) -> Self {
+        if let Some(id) = inspect.id {
+            self.id = id;
+        }
+        if let Some(name) = inspect.name {
+            self.name = name.trim_start_matches('/').to_string();
+        }
+
+        self.created_at = inspect.created.map(|created| created.to_string());
+        self.started_at = inspect
+            .state
+            .and_then(|state| empty_string_as_none(state.started_at));
+
+        if let Some(config) = inspect.config {
+            self.image = config.image.or(self.image);
+            self.working_dir = empty_string_as_none(config.working_dir);
+            self.labels = config.labels.unwrap_or(self.labels);
+        }
+
+        self.image_id = inspect.image.or(self.image_id);
+
+        self
     }
 }
 
@@ -162,6 +216,21 @@ impl DockerEventMonitor {
             .collect())
     }
 
+    pub async fn inspect_container_identity(
+        &self,
+        container: ContainerIdentity,
+    ) -> Result<ContainerIdentity, Error> {
+        let options = InspectContainerOptionsBuilder::default()
+            .size(false)
+            .build();
+        let inspect = self
+            .docker
+            .inspect_container(&container.id, Some(options))
+            .await?;
+
+        Ok(container.apply_inspect(inspect))
+    }
+
     pub async fn container_stats(
         &self,
         container_id: &str,
@@ -174,6 +243,26 @@ impl DockerEventMonitor {
         };
 
         Ok(container_stats(stats?))
+    }
+
+    pub async fn stream_container_stats<F>(
+        &self,
+        container_id: &str,
+        mut callback: F,
+    ) -> Result<(), Error>
+    where
+        F: FnMut(ContainerStats),
+    {
+        let options = StatsOptionsBuilder::default().stream(true).build();
+        let mut stats = self.docker.stats(container_id, Some(options));
+
+        while let Some(stats) = stats.next().await {
+            if let Some(stats) = container_stats(stats?) {
+                callback(stats);
+            }
+        }
+
+        Ok(())
     }
 
     pub fn spawn_watch<F, Fut>(
@@ -277,4 +366,8 @@ fn cpu_count(stats: &ContainerCpuStats) -> Option<u32> {
             .as_ref()
             .map(|usage| usage.len() as u32)
     })
+}
+
+fn empty_string_as_none(value: Option<String>) -> Option<String> {
+    value.filter(|value| !value.is_empty())
 }
