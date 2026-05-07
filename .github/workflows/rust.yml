@@ -1,0 +1,28 @@
+name: Rust
+
+on:
+  push:
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Use stable Rust
+        run: |
+          rustup toolchain install stable
+          rustup default stable
+          rustup component add clippy
+
+      - name: Check
+        run: cargo check --locked
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+
+      - name: Build
+        run: cargo build --locked
