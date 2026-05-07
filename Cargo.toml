@@ -8,4 +8,4 @@ anyhow = "1.0.100"
 bollard = "0.20.2"
 futures-util = "0.3.32"
 lexopt = "0.3.1"
-tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread", "signal"] }
+tokio = { version = "1.52.1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal"] }
