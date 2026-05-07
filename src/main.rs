@@ -656,7 +656,7 @@ fn prometheus_container_labels(container: &ContainerIdentity) -> String {
 
     labels.extend(container.labels.iter().map(|(name, value)| {
         prometheus_label(
-            &format!("container_label_{}", name.replace('.', "_")),
+            &format!("container_label_{}", prometheus_label_name(name)),
             value,
         )
     }));
@@ -666,6 +666,19 @@ fn prometheus_container_labels(container: &ContainerIdentity) -> String {
 
 fn prometheus_label(name: &str, value: &str) -> String {
     format!("{name}=\"{}\"", escape_prometheus_label_value(value))
+}
+
+fn prometheus_label_name(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '_' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 fn escape_prometheus_label_value(value: &str) -> String {
