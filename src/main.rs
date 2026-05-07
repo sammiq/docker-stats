@@ -360,6 +360,9 @@ async fn handle_metrics_connection(mut stream: TcpStream, metrics_body: MetricsB
     let path = request_parts.next();
 
     match (method, path) {
+        (Some("GET"), Some("/health")) => {
+            write_http_response(&mut stream, "200 OK", "text/plain; charset=utf-8", "ok\n").await?;
+        }
         (Some("GET"), Some("/metrics")) => {
             let body = metrics_body
                 .read()
