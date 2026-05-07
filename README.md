@@ -4,10 +4,22 @@
 watches container start/stop events, streams Docker stats for each running
 container, and serves a cached Prometheus text feed.
 
+For monitoring a small number of basic stats, for a small number of local
+docker containers, cAdvisor is rather CPU intensive. This tool outputs basic
+stats using the same naming mechanism, with some of the appropriate
+matching metadata to serve as a drop-in replacement for cAdvisor.
+
 The exporter currently exposes:
 
 - `GET /metrics` for Prometheus metrics
 - `GET /health` for a simple healthcheck
+
+## Caveats
+
+This tool opens a stream for each docker container in order to provide
+timely updates at reasonable update rates. For large container set ups
+this may mean that the program runs out of handles and does not collect
+metrics under those conditions. In that case, use an alternative tool.
 
 ## Metrics
 
