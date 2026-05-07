@@ -18,9 +18,6 @@ jobs:
           rustup default stable
           rustup component add clippy
 
-      - name: Check
-        run: cargo check --locked
-
       - name: Clippy
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
