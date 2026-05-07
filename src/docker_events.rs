@@ -1,4 +1,4 @@
-use std::{collections::HashMap, future::Future};
+use std::{collections::HashMap, future::Future, time::SystemTime};
 
 use bollard::{
     Docker,
@@ -38,6 +38,7 @@ pub struct ContainerIdentity {
 pub struct ContainerStats {
     pub id: String,
     pub name: Option<String>,
+    pub collected_at: SystemTime,
     pub cpu_percent: Option<f64>,
     pub cpu_usage_ns: Option<u64>,
     pub memory_usage_bytes: Option<u64>,
@@ -242,7 +243,10 @@ impl DockerEventMonitor {
             return Ok(None);
         };
 
-        Ok(container_stats(stats?))
+        let stats = stats?;
+        let collected_at = SystemTime::now();
+
+        Ok(container_stats(stats, collected_at))
     }
 
     pub async fn stream_container_stats<F>(
@@ -257,7 +261,10 @@ impl DockerEventMonitor {
         let mut stats = self.docker.stats(container_id, Some(options));
 
         while let Some(stats) = stats.next().await {
-            if let Some(stats) = container_stats(stats?) {
+            let stats = stats?;
+            let collected_at = SystemTime::now();
+
+            if let Some(stats) = container_stats(stats, collected_at) {
                 callback(stats);
             }
         }
@@ -280,7 +287,10 @@ impl DockerEventMonitor {
     }
 }
 
-fn container_stats(stats: ContainerStatsResponse) -> Option<ContainerStats> {
+fn container_stats(
+    stats: ContainerStatsResponse,
+    collected_at: SystemTime,
+) -> Option<ContainerStats> {
     let cpu_percent = calculate_cpu_percent(&stats);
     let cpu_usage_ns = stats.cpu_stats.as_ref().and_then(total_cpu_usage);
     let memory_stats = stats.memory_stats.as_ref();
@@ -326,6 +336,7 @@ fn container_stats(stats: ContainerStatsResponse) -> Option<ContainerStats> {
     Some(ContainerStats {
         id: stats.id?,
         name: stats.name,
+        collected_at,
         cpu_percent,
         cpu_usage_ns,
         memory_usage_bytes,

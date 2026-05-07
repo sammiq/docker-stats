@@ -338,10 +338,14 @@ fn print_containers(containers: &Containers, container_stats: &ContainerStatsByI
             .and_then(|stats| stats.network_tx_bytes)
             .map(format_bytes)
             .unwrap_or_else(|| "-".to_string());
+        let collected_at = stats
+            .map(|stats| format_system_time(stats.collected_at))
+            .transpose()?
+            .unwrap_or_else(|| "-".to_string());
 
         println!(
-            "  cpu={} cpu_time={:>9} memory={:>9} rss={:>9} cache={:>9} rx={:>9} tx={:>9} {} {}",
-            cpu, cpu_time, memory, rss, cache, rx, tx, container.id, container.name
+            "  collected_at={} cpu={} cpu_time={:>9} memory={:>9} rss={:>9} cache={:>9} rx={:>9} tx={:>9} {} {}",
+            collected_at, cpu, cpu_time, memory, rss, cache, rx, tx, container.id, container.name
         );
         println!(
             "    image={} image_id={} created={} started={} workdir={} labels={}",
@@ -379,6 +383,18 @@ fn format_duration_ns(nanoseconds: u64) -> String {
     const SECOND: f64 = 1_000_000_000.0;
 
     format!("{:.2}s", nanoseconds as f64 / SECOND)
+}
+
+fn format_system_time(time: SystemTime) -> Result<String> {
+    let duration = time
+        .duration_since(UNIX_EPOCH)
+        .context("stats collection timestamp is before the Unix epoch")?;
+
+    Ok(format!(
+        "{}.{:03}",
+        duration.as_secs(),
+        duration.subsec_millis()
+    ))
 }
 
 fn format_optional(value: Option<&str>) -> &str {
