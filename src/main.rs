@@ -454,6 +454,14 @@ fn render_prometheus_metrics(
     let mut metrics = String::from(
         "# HELP container_cpu_usage_seconds_total Cumulative cpu time consumed in seconds.\n\
          # TYPE container_cpu_usage_seconds_total counter\n\
+         # HELP container_cpu_system_seconds_total Cumulative system cpu time consumed in seconds.\n\
+         # TYPE container_cpu_system_seconds_total counter\n\
+         # HELP container_cpu_user_seconds_total Cumulative user cpu time consumed seconds.\n\
+         # TYPE container_cpu_user_seconds_total counter\n\
+         # HELP container_spec_memory_limit_bytes Memory limit for the container in bytes.\n\
+         # TYPE container_spec_memory_limit_bytes gauge\n\
+         # HELP container_memory_usage_bytes Current memory usage in bytes.\n\
+         # TYPE container_memory_usage_bytes gauge\n\
          # HELP container_memory_rss Size of RSS in bytes.\n\
          # TYPE container_memory_rss gauge\n\
          # HELP container_memory_cache Number of bytes of page cache memory.\n\
@@ -486,12 +494,48 @@ fn render_prometheus_metrics(
         };
 
         let collected_at_ms = unix_timestamp_millis(stats.collected_at)?;
-        if let Some(cpu_usage_ns) = stats.cpu_usage_ns {
+        if let Some(cpu_usage_total_ns) = stats.cpu_usage_total_ns {
             push_prometheus_sample(
                 &mut metrics,
                 "container_cpu_usage_seconds_total",
                 &labels,
-                cpu_usage_ns as f64 / 1_000_000_000.0,
+                cpu_usage_total_ns as f64 / 1_000_000_000.0,
+                collected_at_ms,
+            );
+        }
+        if let Some(cpu_usage_system_ns) = stats.cpu_usage_system_ns {
+            push_prometheus_sample(
+                &mut metrics,
+                "container_cpu_system_seconds_total",
+                &labels,
+                cpu_usage_system_ns as f64 / 1_000_000_000.0,
+                collected_at_ms,
+            );
+        }
+        if let Some(cpu_usage_user_ns) = stats.cpu_usage_user_ns {
+            push_prometheus_sample(
+                &mut metrics,
+                "container_cpu_user_seconds_total",
+                &labels,
+                cpu_usage_user_ns as f64 / 1_000_000_000.0,
+                collected_at_ms,
+            );
+        }
+        if let Some(memory_limit_bytes) = stats.memory_limit_bytes {
+            push_prometheus_sample(
+                &mut metrics,
+                "container_spec_memory_limit_bytes",
+                &labels,
+                memory_limit_bytes as f64,
+                collected_at_ms,
+            );
+        }
+        if let Some(memory_rss_bytes) = stats.memory_usage_bytes {
+            push_prometheus_sample(
+                &mut metrics,
+                "container_memory_usage_bytes",
+                &labels,
+                memory_rss_bytes as f64,
                 collected_at_ms,
             );
         }
