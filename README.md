@@ -26,6 +26,10 @@ metrics under those conditions. In that case, use an alternative tool.
 The metric names follow cAdvisor-style naming where practical:
 
 - `container_cpu_usage_seconds_total`
+- `container_cpu_system_seconds_total`
+- `container_cpu_user_seconds_total`
+- `container_spec_memory_limit_bytes`
+- `container_memory_usage_bytes`
 - `container_memory_rss`
 - `container_memory_cache`
 - `container_network_receive_bytes_total`
