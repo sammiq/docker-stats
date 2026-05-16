@@ -14,6 +14,7 @@ use docker_stats::docker_events::{
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
+    signal::unix::{SignalKind, signal},
     task::JoinHandle,
 };
 
@@ -130,6 +131,8 @@ async fn main() -> Result<()> {
         Arc::clone(&metrics_body),
     ));
 
+    let mut terminate = signal(SignalKind::terminate()).context("failed to listen for SIGTERM")?;
+
     tokio::select! {
         result = events => {
             match result {
@@ -155,6 +158,7 @@ async fn main() -> Result<()> {
         signal = tokio::signal::ctrl_c() => {
             signal.context("failed to listen for ctrl-c")?;
         }
+        _ = terminate.recv() => {}
     }
 
     Ok(())
